@@ -335,3 +335,20 @@ test("[P4][github] writes require approval, reads allow", () => {
   });
   assert.equal(run(read, ctx()).kind, "allow");
 });
+
+test("[P][ci] ci reads allow; ci-control mutations require approval", () => {
+  const wait = action({
+    class: "ci-read",
+    op: "wait",
+    tool: "ci",
+    ref: { kind: "ci", repo: "o/r" },
+  });
+  assert.equal(run(wait, ctx()).kind, "allow");
+  const rerun = action({
+    class: "ci-control",
+    op: "rerun_failed",
+    tool: "ci",
+    ref: { kind: "ci", repo: "o/r", id: "987654" },
+  });
+  assert.equal(run(rerun, ctx()).kind, "require-approval");
+});

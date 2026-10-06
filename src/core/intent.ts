@@ -66,6 +66,9 @@ export function actionFromToolCall(call: RawToolCall, ctx: PolicyContext): Polic
   if (tool === "github") {
     return actionFromGithubTool(input, ctx);
   }
+  if (tool === "ci") {
+    return actionFromCiTool(input, ctx);
+  }
   if (EXECUTE_TOOLS.has(tool)) {
     // code_buffer/code_job may also mutate retained-source state; "execute"
     // is the correct risk class for both (their filesystem footprint is the
@@ -274,6 +277,48 @@ function actionFromGithubTool(input: Record<string, unknown>, ctx: PolicyContext
     source: "tool",
     tool: "github",
   };
+}
+
+const CI_READ_ACTIONS = new Set([
+  "resolve",
+  "status",
+  "wait",
+  "wait_all",
+  "failure_digest",
+  "logs",
+  "artifacts",
+]);
+const CI_MUTATIONS = new Set(["rerun_failed", "cancel", "dispatch"]);
+
+/**
+ * Map pi-ci-next `ci` tool calls to policy actions. Reads auto-allow;
+ * CI control mutations classify ci-control (approval per policy profile)
+ * with repo+run identity in the material ref.
+ */
+function actionFromCiTool(input: Record<string, unknown>, ctx: PolicyContext): PolicyAction {
+  void ctx;
+  const action = typeof input.action === "string" ? input.action : "";
+  const repository = typeof input.repository === "string" ? input.repository : undefined;
+  const runId = typeof input.run_id === "number" ? String(input.run_id) : undefined;
+  if (CI_MUTATIONS.has(action)) {
+    return {
+      class: "ci-control",
+      op: action,
+      ref: { kind: "ci", repo: repository, id: runId },
+      source: "tool",
+      tool: "ci",
+    };
+  }
+  if (CI_READ_ACTIONS.has(action)) {
+    return {
+      class: "ci-read",
+      op: action,
+      ref: repository ? { kind: "ci", repo: repository } : undefined,
+      source: "tool",
+      tool: "ci",
+    };
+  }
+  return { class: "unknown", op: "unknown", source: "tool", tool: "ci" };
 }
 
 /**
