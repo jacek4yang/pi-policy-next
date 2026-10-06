@@ -281,3 +281,57 @@ test("[P3] session-class grants cover only their action class (explicit grant)",
     "class grant does not leak across classes",
   );
 });
+
+test("[P2][github] merge approval binds to repo+PR+head SHA+method; changes invalidate", () => {
+  const merge = action({
+    class: "github-destructive",
+    op: "merge_pr",
+    tool: "github",
+    ref: { kind: "github", repo: "o/r", id: "42", head: "aaaa", method: "squash" },
+  });
+  const grants = [
+    { digest: intentDigest(approvalIntent(merge)), scope: "exact-action" as const, grantedAt: NOW },
+  ];
+  assert.equal(run(merge, ctx(), grants).kind, "allow");
+
+  const headMoved = action({
+    class: "github-destructive",
+    op: "merge_pr",
+    tool: "github",
+    ref: { kind: "github", repo: "o/r", id: "42", head: "bbbb", method: "squash" },
+  });
+  assert.equal(
+    run(headMoved, ctx(), grants).kind,
+    "require-approval",
+    "head SHA change invalidates",
+  );
+
+  const methodChanged = action({
+    class: "github-destructive",
+    op: "merge_pr",
+    tool: "github",
+    ref: { kind: "github", repo: "o/r", id: "42", head: "aaaa", method: "rebase" },
+  });
+  assert.equal(
+    run(methodChanged, ctx(), grants).kind,
+    "require-approval",
+    "method change invalidates",
+  );
+});
+
+test("[P4][github] writes require approval, reads allow", () => {
+  const comment = action({
+    class: "github-write",
+    op: "comment",
+    tool: "github",
+    ref: { kind: "github", repo: "o/r", id: "17" },
+  });
+  assert.equal(run(comment, ctx()).kind, "require-approval");
+  const read = action({
+    class: "github-read",
+    op: "summary",
+    tool: "github",
+    ref: { kind: "github", repo: "o/r" },
+  });
+  assert.equal(run(read, ctx()).kind, "allow");
+});

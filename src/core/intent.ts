@@ -63,6 +63,9 @@ export function actionFromToolCall(call: RawToolCall, ctx: PolicyContext): Polic
       tool,
     };
   }
+  if (tool === "github") {
+    return actionFromGithubTool(input, ctx);
+  }
   if (EXECUTE_TOOLS.has(tool)) {
     // code_buffer/code_job may also mutate retained-source state; "execute"
     // is the correct risk class for both (their filesystem footprint is the
@@ -210,6 +213,67 @@ function pathInputs(input: Record<string, unknown>, ctx: PolicyContext) {
     input: p,
     canonical: canonicalize(p, { platform }, ctx.workspaceRoot),
   }));
+}
+
+const GITHUB_READ_ACTIONS = new Set(["summary", "detail", "list", "pr_file_patch", "status"]);
+const GITHUB_DESTRUCTIVE_OPERATIONS = new Set(["merge_pr"]);
+const GITHUB_WRITE_OPERATIONS = new Set([
+  "create_issue",
+  "comment",
+  "update_issue",
+  "create_pr",
+  "add_labels",
+]);
+
+/**
+ * Map pi-github-next's `github` tool calls to normalized policy actions.
+ * Material identity: repository, resource number, expected head SHA, and
+ * merge method — exactly the fields an approval binds to (P2 for GitHub).
+ */
+function actionFromGithubTool(input: Record<string, unknown>, ctx: PolicyContext): PolicyAction {
+  const action = typeof input.action === "string" ? input.action : "";
+  const operation = typeof input.operation === "string" ? input.operation : "";
+  const repository = typeof input.repository === "string" ? input.repository : undefined;
+  const number = typeof input.number === "number" ? input.number : undefined;
+  const headSha = typeof input.head_sha === "string" ? input.head_sha : undefined;
+  const method = typeof input.method === "string" ? input.method : undefined;
+
+  if (action === "mutate" || action === "promote_issue_candidate") {
+    const actionClass: PolicyActionClass = GITHUB_DESTRUCTIVE_OPERATIONS.has(operation)
+      ? "github-destructive"
+      : GITHUB_WRITE_OPERATIONS.has(operation)
+        ? "github-write"
+        : "github-write";
+    return {
+      class: actionClass,
+      op: operation || action,
+      ref: {
+        kind: "github",
+        repo: repository,
+        id: number !== undefined ? String(number) : undefined,
+        head: headSha,
+        method,
+      },
+      source: "tool",
+      tool: "github",
+    };
+  }
+  if (GITHUB_READ_ACTIONS.has(action) || action === "") {
+    void ctx;
+    return {
+      class: "github-read",
+      op: action || "github-read",
+      ref: repository ? { kind: "github", repo: repository } : undefined,
+      source: "tool",
+      tool: "github",
+    };
+  }
+  return {
+    class: "unknown",
+    op: "unknown",
+    source: "tool",
+    tool: "github",
+  };
 }
 
 /**
